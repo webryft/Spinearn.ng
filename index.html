@@ -1016,16 +1016,86 @@ const canvas = document.getElementById('wheelCanvas');
 const ctx    = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height, CX = W/2, CY = H/2, R = W/2 - 8;
 
-// Colour palette for segments
+// ── PRELOAD BOTH SEGMENT IMAGES ──────────────────────
+// image.jpg     → used for small coin segments (value <= 1000)
+// imagelucky.jpg → used for big coin segments  (value >= 10000)
+// Both are .jpg format — place them in the same folder as index.html
+const IMG_NORMAL = new Image();   // small coins background
+const IMG_LUCKY  = new Image();   // big coins background
+let imagesLoaded = 0;
+
+function onImageLoad() {
+  imagesLoaded++;
+  // Once both images are ready (or failed), draw the wheel
+  if (imagesLoaded >= 2) drawWheel();
+}
+
+IMG_NORMAL.onload  = onImageLoad;
+IMG_LUCKY.onload   = onImageLoad;
+// If image fails to load, still draw wheel (graceful fallback to colour)
+IMG_NORMAL.onerror = onImageLoad;
+IMG_LUCKY.onerror  = onImageLoad;
+
+// Load the images — .jpg format
+IMG_NORMAL.src = 'image.jpg';
+IMG_LUCKY.src  = 'imagelucky.jpg';
+
+// ── SEGMENT COLOUR FALLBACKS (used if images fail to load) ──
 const SEG_COLORS = {
-  coin:  ['#2d1b69','#3d2599','#1e1050','#4a30b0'],
-  x:     ['#4a0e0e','#6b1414','#3b0a0a','#5c1010'],
-  retry: ['#0e3a4a','#145a6b','#0a2d3b','#10485c'],
+  coin_small:['#2d1b69','#3d2599','#1e1050','#4a30b0'],  // <= 1000 coins
+  coin_big:  ['#1a3a1a','#1e4d1e','#163016','#245024'],  // >= 10000 coins (green-ish)
+  x:         ['#4a0e0e','#6b1414','#3b0a0a','#5c1010'],
+  retry:     ['#0e3a4a','#145a6b','#0a2d3b','#10485c'],
 };
 
 function getSegColor(seg, idx) {
-  const pal = SEG_COLORS[seg.type];
-  return pal[idx % pal.length];
+  if (seg.type === 'x')     return SEG_COLORS.x[idx % 4];
+  if (seg.type === 'retry') return SEG_COLORS.retry[idx % 4];
+  // coin — split by value
+  if (seg.value >= 10000)   return SEG_COLORS.coin_big[idx % 4];
+  return SEG_COLORS.coin_small[idx % 4];
+}
+
+// ── CLIP AND DRAW IMAGE INTO A PIE SEGMENT ───────────
+// img       — the Image object (IMG_NORMAL or IMG_LUCKY)
+// startAngle, endAngle — segment bounds in radians
+// fallbackColor — used if image not loaded
+function drawSegmentImage(img, startAngle, endAngle, fallbackColor) {
+  ctx.save();
+  // Create clipping path = pie slice shape
+  ctx.beginPath();
+  ctx.moveTo(CX, CY);
+  ctx.arc(CX, CY, R, startAngle, endAngle);
+  ctx.closePath();
+  ctx.clip();
+
+  if (img.complete && img.naturalWidth > 0) {
+    // Draw the image centered, scaled to fill the full wheel circle
+    // The clip above ensures only the slice is visible
+    const size = R * 2;
+    ctx.globalAlpha = 0.55; // semi-transparent so colours/text show over it
+    ctx.drawImage(img, CX - R, CY - R, size, size);
+    ctx.globalAlpha = 1.0;
+
+    // Colour tint overlay on top of image for readability
+    ctx.beginPath();
+    ctx.moveTo(CX, CY);
+    ctx.arc(CX, CY, R, startAngle, endAngle);
+    ctx.closePath();
+    ctx.fillStyle = fallbackColor;
+    ctx.globalAlpha = 0.5;
+    ctx.fill();
+    ctx.globalAlpha = 1.0;
+  } else {
+    // Fallback: solid colour only
+    ctx.beginPath();
+    ctx.moveTo(CX, CY);
+    ctx.arc(CX, CY, R, startAngle, endAngle);
+    ctx.closePath();
+    ctx.fillStyle = fallbackColor;
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawWheel() {
@@ -1036,61 +1106,116 @@ function drawWheel() {
 
   ctx.clearRect(0,0,W,H);
 
-  // Outer ring
+  // Outer ring glow
   ctx.save();
   ctx.beginPath();ctx.arc(CX,CY,R+6,0,2*Math.PI);
   const grad = ctx.createLinearGradient(0,0,W,H);
   grad.addColorStop(0,'#6c3ce1');grad.addColorStop(1,'#3b1fa8');
   ctx.fillStyle=grad;ctx.fill();ctx.restore();
 
-  // Segments
+  // Draw each segment
   for(let i=0;i<n;i++){
     const startAngle = wheelAngle + i*arc - Math.PI/2;
     const endAngle   = startAngle + arc;
     const seg        = segs[i];
+    const fallback   = getSegColor(seg, i);
 
-    // Segment fill
+    // ── PICK CORRECT IMAGE ─────────────────────────
+    // image.jpg     → small coin segments (value 10 – 1000)
+    // imagelucky.jpg → big coin segments  (value 10000+)
+    // X and Retry   → no image, solid colour only
+    if (seg.type === 'coin') {
+      const useImg = seg.value >= 10000 ? IMG_LUCKY : IMG_NORMAL;
+      drawSegmentImage(useImg, startAngle, endAngle, fallback);
+    } else {
+      // X or Retry — solid colour fill
+      ctx.beginPath();
+      ctx.moveTo(CX,CY);
+      ctx.arc(CX,CY,R,startAngle,endAngle);
+      ctx.closePath();
+      ctx.fillStyle = fallback;
+      ctx.fill();
+    }
+
+    // Segment border line
     ctx.beginPath();
     ctx.moveTo(CX,CY);
     ctx.arc(CX,CY,R,startAngle,endAngle);
     ctx.closePath();
-    ctx.fillStyle = getSegColor(seg,i);
-    ctx.fill();
-    // Segment border
-    ctx.strokeStyle='rgba(255,255,255,0.1)';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.18)';
+    ctx.lineWidth=1.5;
+    ctx.stroke();
 
-    // Text / icon
+    // ── ICONS & LABELS ────────────────────────────
     ctx.save();
     ctx.translate(CX,CY);
     ctx.rotate(startAngle + arc/2);
     ctx.textAlign='right';
 
     if(seg.type==='x'){
-      // X icon
-      ctx.strokeStyle='#ef4444';ctx.lineWidth=3;ctx.lineCap='round';
-      const xr=12, xd=R*0.62;
-      ctx.beginPath();ctx.moveTo(xd-xr,- xr);ctx.lineTo(xd+xr,xr);ctx.stroke();
+      // Red X
+      ctx.strokeStyle='#ff6b6b';ctx.lineWidth=3.5;ctx.lineCap='round';
+      const xr=13, xd=R*0.60;
+      ctx.shadowColor='#ef4444';ctx.shadowBlur=8;
+      ctx.beginPath();ctx.moveTo(xd-xr,-xr);ctx.lineTo(xd+xr,xr);ctx.stroke();
       ctx.beginPath();ctx.moveTo(xd+xr,-xr);ctx.lineTo(xd-xr,xr);ctx.stroke();
+      ctx.shadowBlur=0;
+
     } else if(seg.type==='retry'){
-      // Retry arrow
-      ctx.strokeStyle='#818cf8';ctx.lineWidth=2.5;ctx.lineCap='round';
-      const rd = R*0.62, rr=10;
-      ctx.beginPath();ctx.arc(rd,0,rr,0.3,2*Math.PI-0.3);ctx.stroke();
-      ctx.fillStyle='#818cf8';ctx.beginPath();
-      ctx.moveTo(rd+rr*Math.cos(0.3)-3,rr*Math.sin(0.3));
-      ctx.lineTo(rd+rr*Math.cos(0.3)+5,rr*Math.sin(0.3)-3);
-      ctx.lineTo(rd+rr*Math.cos(0.3)+2,rr*Math.sin(0.3)+5);
-      ctx.fill();
+      // Purple retry arrow
+      ctx.strokeStyle='#a78bfa';ctx.lineWidth=2.5;ctx.lineCap='round';
+      const rd = R*0.60, rr=11;
+      ctx.shadowColor='#818cf8';ctx.shadowBlur=6;
+      ctx.beginPath();ctx.arc(rd,0,rr,0.4,2*Math.PI-0.4);ctx.stroke();
+      // Arrowhead
+      const ax=rd+rr*Math.cos(0.4), ay=rr*Math.sin(0.4);
+      ctx.fillStyle='#a78bfa';ctx.beginPath();
+      ctx.moveTo(ax-4,ay-1);ctx.lineTo(ax+5,ay-2);ctx.lineTo(ax+1,ay+5);
+      ctx.fill();ctx.shadowBlur=0;
+      // "RETRY" text
+      ctx.fillStyle='#c4b5fd';ctx.font='bold 9px Nunito,sans-serif';
+      ctx.fillText('RETRY',rd+rr+18,4);
+
     } else {
-      // Coin value text
-      const td = R*0.65;
-      ctx.fillStyle='#f5c518';
-      ctx.font=`bold ${seg.value>=1000000?10:seg.value>=10000?11:13}px Nunito,sans-serif`;
+      // Coin segment — label + value text + coin graphic
+      const td = R*0.62;
+      const isLucky = seg.value >= 10000;
+
+      // Glowing label background pill
+      const labelW = seg.label.length * 8 + 14;
+      ctx.fillStyle = isLucky
+        ? 'rgba(34,197,94,0.75)'
+        : 'rgba(245,197,24,0.7)';
+      ctx.beginPath();
+      // Rounded rect manually (no roundRect in older browsers)
+      const lx=td - labelW + 4, ly=-10, lh=20;
+      ctx.moveTo(lx+5,ly);ctx.lineTo(lx+labelW-5,ly);
+      ctx.arcTo(lx+labelW,ly,lx+labelW,ly+lh/2,5);
+      ctx.arcTo(lx+labelW,ly+lh,lx+labelW-5,ly+lh,5);
+      ctx.lineTo(lx+5,ly+lh);
+      ctx.arcTo(lx,ly+lh,lx,ly+lh/2,5);
+      ctx.arcTo(lx,ly,lx+5,ly,5);
+      ctx.closePath();ctx.fill();
+
+      // Value text
+      ctx.shadowColor = isLucky ? '#22c55e' : '#f5c518';
+      ctx.shadowBlur  = 6;
+      ctx.fillStyle   = '#fff';
+      const fontSize  = seg.value>=1000000?9:seg.value>=10000?10:12;
+      ctx.font=`900 ${fontSize}px Nunito,sans-serif`;
       ctx.fillText(seg.label, td, 4);
-      // Small coin icon
-      ctx.beginPath();ctx.arc(td-20,0,7,0,2*Math.PI);
-      ctx.fillStyle='rgba(245,197,24,0.3)';ctx.fill();
-      ctx.strokeStyle='#f5c518';ctx.lineWidth=1.5;ctx.stroke();
+      ctx.shadowBlur=0;
+
+      // Coin circle icon
+      const cix = td - (seg.label.length*fontSize*0.55) - 14;
+      ctx.beginPath();ctx.arc(cix,0,8,0,2*Math.PI);
+      ctx.fillStyle= isLucky ? 'rgba(34,197,94,0.9)' : 'rgba(245,197,24,0.9)';
+      ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=1.2;ctx.stroke();
+      // ₦ symbol inside coin
+      ctx.fillStyle='rgba(0,0,0,0.7)';ctx.font='bold 8px Nunito,sans-serif';
+      ctx.textAlign='center';ctx.fillText('₦',cix,3);
+      ctx.textAlign='right';
     }
     ctx.restore();
   }
