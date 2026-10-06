@@ -1,2 +1,2 @@
-# goalrush-admin-server
+# spinning earrings 
 admin server 
