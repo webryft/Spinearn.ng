@@ -765,17 +765,37 @@ function spinWheel(){
   });
   const totalW=weights.reduce((a,b)=>a+b,0);let r=Math.random()*totalW;let resultIdx=0;
   for(let i=0;i<weights.length;i++){r-=weights[i];if(r<=0){resultIdx=i;break;}}
-  const arc=(2*Math.PI)/n,segCA=resultIdx*arc+arc/2;
-  const minR=5+(currentStageId*0.3),extR=(minR+Math.random()*3)*2*Math.PI;
-  const tOff=(2*Math.PI-segCA)-wheelAngle;
-  const totalRot=extR+((tOff%(2*Math.PI))+2*Math.PI)%(2*Math.PI);
-  const startA=wheelAngle,dur=4000+currentStageId*150,startT=performance.now();
+
+  // ── FIXED ANGLE CALCULATION ───────────────────────
+  // Segments are drawn: segment i starts at (wheelAngle + i*arc - PI/2)
+  // Pointer is at the TOP of the wheel = canvas angle -PI/2 (i.e. 0 offset)
+  // We want the CENTER of resultIdx segment to land under the pointer.
+  // Center of segment i in wheel-local space = i*arc + arc/2
+  // We need: wheelAngle + resultIdx*arc + arc/2 - PI/2 = -PI/2  (mod 2PI)
+  // => wheelAngle = -(resultIdx*arc + arc/2)  (mod 2PI)
+  // So the angle we must spin TO is: targetWheelAngle = -(resultIdx*arc + arc/2)
+  const arc=(2*Math.PI)/n;
+  const targetWheelAngle = (-(resultIdx*arc + arc/2) % (2*Math.PI) + 2*Math.PI) % (2*Math.PI);
+  // Minimum full rotations (5+ based on stage)
+  const minRotations = 5 + currentStageId * 0.4;
+  const extraRotations = (minRotations + Math.random()*3) * 2*Math.PI;
+  // How much more we need to rotate from current position to hit targetWheelAngle
+  const currentNorm = ((wheelAngle % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI);
+  const diff = ((targetWheelAngle - currentNorm) + 2*Math.PI) % (2*Math.PI);
+  const totalRot = extraRotations + diff;
+
+  const startA=wheelAngle,dur=4000+currentStageId*120,startT=performance.now();
   function easeOut(t){return 1-Math.pow(1-t,3);}
   function animate(now){
     const el=now-startT,prog=Math.min(el/dur,1);
     wheelAngle=startA+totalRot*easeOut(prog);drawWheel();
     if(prog<1)requestAnimationFrame(animate);
-    else{wheelAngle=((startA+totalRot)%(2*Math.PI));drawWheel();onSpinEnd(stage.segments[resultIdx],stage);}
+    else{
+      // Snap to exact target so no drift
+      wheelAngle=targetWheelAngle;
+      drawWheel();
+      onSpinEnd(stage.segments[resultIdx],stage);
+    }
   }
   requestAnimationFrame(animate);
 }
@@ -823,10 +843,17 @@ function spinWheelFree(){
   const stage=STAGES.find(s=>s.id===currentStageId),segs=stage.segments,n=segs.length;
   const weights=segs.map(seg=>{if(seg.type==='retry')return 0.5;if(seg.type==='x')return 3.5;const v=seg.value;if(v<=100)return 3.0;if(v<=1000)return 2.2;if(v<=10000)return 1.5;if(v<=100000)return 1.0;if(v<=1000000)return 0.5;return 0.15;});
   const totalW=weights.reduce((a,b)=>a+b,0);let r=Math.random()*totalW;let ri=0;for(let i=0;i<weights.length;i++){r-=weights[i];if(r<=0){ri=i;break;}}
-  const arc=(2*Math.PI)/n,sca=ri*arc+arc/2,extR=(4+Math.random()*2)*2*Math.PI,tOff=(2*Math.PI-sca)-wheelAngle,totalRot=extR+((tOff%(2*Math.PI))+2*Math.PI)%(2*Math.PI);
+  // Same corrected angle calculation as spinWheel
+  const arc=(2*Math.PI)/n;
+  const targetWheelAngle2=((-(ri*arc+arc/2))%(2*Math.PI)+2*Math.PI)%(2*Math.PI);
+  const minR2=4+(currentStageId*0.3);
+  const extR=(minR2+Math.random()*2)*2*Math.PI;
+  const currentNorm2=((wheelAngle%(2*Math.PI))+2*Math.PI)%(2*Math.PI);
+  const diff2=((targetWheelAngle2-currentNorm2)+2*Math.PI)%(2*Math.PI);
+  const totalRot=extR+diff2;
   const startA=wheelAngle,dur=3500,startT=performance.now();
   function easeOut(t){return 1-Math.pow(1-t,3);}
-  function animate(now){const el=now-startT,prog=Math.min(el/dur,1);wheelAngle=startA+totalRot*easeOut(prog);drawWheel();if(prog<1)requestAnimationFrame(animate);else{wheelAngle=((startA+totalRot)%(2*Math.PI));drawWheel();onSpinEnd(stage.segments[ri],stage);}}
+  function animate(now){const el=now-startT,prog=Math.min(el/dur,1);wheelAngle=startA+totalRot*easeOut(prog);drawWheel();if(prog<1)requestAnimationFrame(animate);else{wheelAngle=targetWheelAngle2;drawWheel();onSpinEnd(stage.segments[ri],stage);}}
   requestAnimationFrame(animate);
 }
 
@@ -838,19 +865,60 @@ function spinWheelFree(){
 function claimAllCoins(){
   if(!currentUser){openModal('m-signin');return;}
   const pending=userData.pendingCoins||0;
-  if(pending<=0){showToast('No coins to claim. Spin first!');return;}
-  // Add ALL pending coins to coin balance
-  userData.coins+=pending;
-  userData.pendingCoins=0;
-  // Calculate exact Naira value
-  const nairaValue=Math.floor(userData.coins/1000)*100;
-  saveUserData();updateUI();updateClaimSection();
-  // Log as claim in history
-  addToHistory({type:'claim',coins:pending,nairaValue,time:Date.now()});
-  // Success feedback
-  const confMsg=`✅ ${fmtC(pending)} coins claimed! Your balance is now ${fmtC(userData.coins)} coins = ₦${nairaValue.toLocaleString('en-NG')}.`;
-  showToast(confMsg);
-  showResultPanel('win',`🪙 ${fmtC(pending)} Coins Claimed!`,`All your coins have been added to your balance.\n\nYour balance: ${fmtC(userData.coins)} coins\nNaira value: ₦${nairaValue.toLocaleString('en-NG')}\n\n(Rate: 1,000 coins = ₦100 — withdraw anytime!)`,pending);
+  if(pending<=0){showToast('No coins to claim. Spin the wheel first!');return;}
+
+  // 1. Add all pending coins to coin balance
+  userData.coins += pending;
+  userData.pendingCoins = 0;
+
+  // 2. Convert ALL coins to Naira and add to fundBalance (main balance)
+  //    Rate: 1,000 coins = ₦100  →  1 coin = ₦0.10
+  //    Only complete thousands count (floor)
+  const nairaValue = Math.floor(userData.coins / 1000) * 100;
+
+  // 3. Add Naira value directly into main fund balance
+  userData.fundBalance += nairaValue;
+
+  // 4. Optionally deduct the coins that were converted so no double-counting
+  //    (coins remain in coin balance for display, but their Naira equivalent
+  //    is now in fundBalance — user can use funds to spin or withdraw)
+  // Note: coins stay visible as a record; withdrawal deducts from fundBalance
+
+  saveUserData();
+  updateUI();
+  updateClaimSection();
+
+  // Log claim in history
+  addToHistory({
+    type:'claim',
+    coins:pending,
+    nairaValue,
+    time:Date.now()
+  });
+
+  // Also log in Firestore for admin visibility
+  if(currentUser){
+    db.collection('claims').add({
+      userId:currentUser.uid,
+      coins:pending,
+      nairaValue,
+      newFundBalance:userData.fundBalance,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    }).catch(()=>{});
+  }
+
+  // Show success
+  showToast(`✅ ${fmtC(pending)} coins claimed! ₦${nairaValue.toLocaleString('en-NG')} added to your balance!`);
+  showResultPanel(
+    'win',
+    `🪙 ${fmtC(pending)} Coins Claimed!`,
+    `Your coins have been converted and added to your main balance!\n\n` +
+    `Coins claimed: ${fmtC(pending)}\n` +
+    `Naira added to balance: ₦${nairaValue.toLocaleString('en-NG')}\n` +
+    `New fund balance: ${fmtNaira(userData.fundBalance)}\n\n` +
+    `Rate: 1,000 coins = ₦100. You can now spin more or withdraw your balance!`,
+    pending
+  );
   launchConfetti();
 }
 
